@@ -1,0 +1,610 @@
+---
+title: "Carbonate and alkalinity dynamics of fjord sediments - changing boundary conditions"
+output: html_document
+author: "Emil De Borger"
+date: "2026-04-14"
+---
+
+# Introduction
+
+This script contains simulations of alkalinity dynamics in fjords with changing
+boundary conditions for chapter X in the AGU monograph "Fjord biogeochemistry" 
+edited by XX.
+
+We use the FEMSDIA model (Soetaert et al., 2026), an expansion upon the OMEXDIA
+model of early diagenesis (Soetaert et al., 1996) and subsequent FESDIA model 
+(Nmor et al., 2021). FEMSDIA models the dynamics of O2, C, N, P, S, Fe, and Mg in 
+mineralization processes and (re)oxidation reactions, and tracks alkalinity changes
+associated to said processes. A full description of the model and model code can 
+be found on XX.
+
+In this study, we set up the FEMSDIA model to simulate what we considered as average
+fjord sediments, with conditions typical for (sub-)Arctic fjords. This entails generally
+high porosity of 0.75, bottom water temperature of 2 degrees C, and bottom water 
+conditions that generally resemble those of inflowing oceanic waters. On these 
+base conditions, we test the importance of different boundary conditions that are
+expected to play a strong role in governing carbonate and alkalinity dynamics and
+range broadly between fjords and fjord systems globally: the sediment accumulation 
+rate, the organic matter deposition rate, the reactivity of the organic matter,
+the bottom water oxygen levels, the accumulation of iron, and the activities of 
+fauna on the seafloor through bioturbation and bioirrigation.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(FEMSDIA)
+library(ggplot2)
+library(tidyr)
+library(dplyr)
+library(purrr)
+library(ggh4x)
+source("plotfuncs.R")
+```
+
+# Background settings
+
+* Qs: CN ratio aanpassen?
+*  Accumulation rates of up to 1 m y−1 have been measured in fjords where calving
+  glaciers are currently retreating (Boldt, 2014).
+* Difference w and LAR (Bianchi table 3 vs table 5).
+* Berg et al., 2003: large amounts of S0 can be produced through reaction R13 and R14,
+  and in order to keep S0 from accumulating to unrealistic levels in the anoxic sediment,
+  we found it necessary to include an additional sink in the form of sulfur disproportionation
+  (R21, Thamdrup and others, 1993). Sulfur disproportionating bacteria are ubiquitous 
+  in marine sediments (Thamdrup and others, 1993; Canfield and Thamdrup, 1994; 
+  Finster and others, 1998), and in the only direct analysis of its significance
+  in marine sediments thus far, the process was found to be the main sink for S0 
+  (Canfield and Thamdrup, 1996).
+
+## NOTE SELF 22/5/2026
+I'm happy with this parametrization as starting point.
+Look like realistic profiles compared to publications / CANOE data.
+- Anammox leave as is
+- Natural sulfur is a solid
+- Our model domain is 1 m, burial is expressed relative to 1 m.
+
+
+```{r}
+
+baseParms <- list(Cflux         = 4.5         ,  # Initial guess - global fjord average (https://doi.org/10.1007/s12237-025-01582-5)
+                  pFast         = 0.3         ,  # Berg et al. - split of 75slow/25 fast after 37 days.
+                  rFast         = 76/365.25   ,  # Soetaert et al., 1996 / was 75/365.25 in Berg but too high.
+                  rSlow         = 0.1/365.25  ,  # Soetaert et al., 1996 / Berg 2003
+                  NCrFdet       = 12/106      ,  # Slightly more degraded OM in mixture
+                  NCrSdet       = 12/106      ,  # Slightly more degraded OM in mixture
+                  NCrRdet       = 12/106      ,  # Slightly more degraded OM in mixture
+                  FeOH3flux     = 0.5         ,  # Lower spectrum reported in Wehrmann et al., 2014 (DOI: 10.1016/j.gca.2014.06.007) (0.5 in Berg et al., 2003)
+                  MnO2flux      = 14/365.25   ,  # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)
+                  O2bw          = 250         , # Reasonable estimate towards well oxygenated conditions (Watts et al., 2024 https://doi.org/10.1029/2023JG007978)
+                  w             = 0.005/365.25,  # Range: 0.1 - 12 cm/yr (Bianchi et al., 2020 table 3: https://doi.org/10.1016/j.earscirev.2020.103145)
+                  por0          = 0.75        ,  # Depositional environment 
+                  pordeep       = 0.7         ,  # Depositional environment
+                  rnitri1       = 5           ,  # Own / Luna's experience that 20 (Default) is way too much.
+                  rnitri2       = 5           ,  # Own / Luna's experience that 20 (Default) is way too much.
+                  Twater        = 2           ,
+                  biot          = 2.74e-07*12 , # based on Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)
+                  biotdepth     = 0.06        ,
+                  DBL           = 0.0005      , 
+                  irr           = 12/365.25   ,  # based on Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)
+                  irrdepth      = 0.003       ,
+                  irratt        = 0.02        ,
+                  ALKbw         = 2200        ,
+                  ksO2oxic      = 3           ,
+                  kinO2anox     = 1           ,
+                  ksFeOH3       = 1.e+04      , # mmolFeOH3/m3 half-sat FeOH3 conc in iron reduction
+                  kinFeOH3      = 1.e+04      , # mmolFeOH3/m3 half-sat FeOH3 inhibition S reduction\
+                  rH2SFeox      = 1.4*10^-9 * 86400, # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)                  
+                  ksSO4BSR      = 2e+03       , # mmolSO4/m3 half-sat SO4 conc in sulphate reduction
+                  kinSO4Met     = 2e+03       , # # mmolSO4/m3 half-sat SO4 inhibition methanogenesis      
+                  rH2Sox        = 4.38*10^-6  , #,# Wang and Van Capellen 1996. - > minor effect on cycles.
+                  rMnox         = 0.0137      , # Van Cappellen and Wang 1996; 1.1*10^-8 * 86400 in Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)
+                  rFeox         = 0.294       ,             # Van Cappellen and Wang 1996; 1.1*10^-6 * 86400 in Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)
+                  rFeS2prod_S0  = 2.3*10^-10 * 86400 /50, # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905) # /50 otherwise way too much FeS2
+                  rFeS2prod_HS  = 8.9*10^-10 * 86400 /50, # Rickard, 1997a # /50 otherwise way too much FeS2
+                  rFeMnox       = 7.5*10^-9 * 86400     , # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905) orig: 7.5*10^-11
+                  rFeSprod      = 4.7*10^-8 * 86400     , # , # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905) -7 expo original
+                  rH2SMnox      = 2*10^-9 * 86400       , # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)
+                  rFeSox        = 6.0*10^-7 * 86400     , # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)
+                  rFeS2ox       = 3.0*10^-11 * 86400      # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)
+                  )
+
+inputw <- c(0.01, 0.05, 0.1, 0.2, 0.4, 0.6, 0.8, 1, 1.5, 2, 3, 5, 10, 12) #cm/year
+inputw <- inputw/100/365 # m/day
+
+
+out1 <- FEMSDIA_run_steady(parms = baseParms) #, dynamicpH = TRUE)
+out1budget <- FEMSDIA_get_budgetC(out1)
+
+plot(out1, which = c("O2"), ylim = c(0.05,0))
+plot(out1, which = c("DIC", "ALK"), ylim = c(0.25, 0))
+plot(out1, which = c("NO3", "NH3"), ylim = c(0.025, 0))
+plot(out1, which = c("MnO2", "Mn"), ylim = c(0.25, 0))
+plot(out1, which = c("FeOH3", "Fe"), ylim = c(0.25, 0))
+plot(out1, which = c("FeS", "FeS2"), ylim = c(0.25, 0))
+
+
+phout <- FEMSDIA_get_pH(out1)
+# phout
+```
+
+# The role of deposition
+
+Investigating the effect of deposition on alkalinity dynamics is not straight-
+forward, as this encompasses several aspects. Deposition is the combination 
+of mineral deposits and organic matter. Mineral deposits, vary seasonally as they
+are related to sources from land, in this case glacial river runoff, and snowmelt 
+and precipitation on the slopes surrounding fjords. Depending on the geology of 
+the fjord catchment, specific minerals relevant to biogeochemical processes, such 
+as iron rich materials, are associated with this mineral deposit. In the model, 
+mineral deposits contribute to the sediment advection rate "w", which affects both
+solids and solutes, and the deposition fluxes of "FeOH3", and "MnO2" to a lesser 
+degree.
+Organic material deposition also varies, this is the result of algae blooms, both 
+within and outside of the fjord, of which a fraction ends up on the seafloor. Organic 
+material also comes from the land surrounding the fjords, a combination of terrestrial
+plants and plant remains, but also human inputs such as waste, or fish farming 
+depositions. In the model these inputs are governed by the "Cflux" parameter, the 
+overall input of (reactive) organic matter, of which the "quality" - i.e. the freshness,
+the reactivity, can be governed with additional parameters.
+Whereas these parameters can often be strongly correlated, they do not always have
+to be. As fjord environments are enormously diverse, no general rules are available
+to constrain several of these parameters simultaneously. So below, we vary these
+boundary conditions individually, and assess their effect on alkalinity generation
+in the seafloor.
+
+## Sediment advection rate
+
+Measured advection rates in fjords globally range from 0.01 cm y-1 to 12 cm y-1 
+(Bianchi et al., 2020 - https://doi.org/10.1016/j.earscirev.2020.103145). This range
+stems from global differences, but also from within-fjord differences related to 
+proximity to the glacier head. w tends to be highest closes to the head (ice-proximal)
+as this region recieves input directly, of which a significant fraction sinks 
+immediately.
+
+### Runs
+```{r advectionvariation}
+
+# Vector of input w's - range from min to max reported by Bianchi et al. (2020).
+inputw_cm_yr <- c(0.01, 0.05, 0.1, 0.2, 0.4, 0.6, 0.8, 1, 1.5, 2, 3, 5, 10, 12)
+inputw_m_day <- inputw_cm_yr / 100 / 365.25
+
+# save each wrun
+runs_w <- vector("list", length(inputw_m_day))
+
+for (i in seq_along(inputw_m_day)) {
+  
+  parms_i <- baseParms
+  parms_i$w <- inputw_m_day[i]
+  
+  message(
+    "Running w = ", inputw_cm_yr[i], " cm yr^-1",
+    " = ", signif(inputw_m_day[i], 4), " m d^-1"
+  )
+  
+  out_i <- FEMSDIA_run_steady(parms = parms_i, dynamicpH = TRUE)
+  
+  runs_w[[i]] <- list(
+    w_cm_yr = inputw_cm_yr[i],
+    w_m_day = inputw_m_day[i],
+    parms   = parms_i,
+    output  = out_i
+  )
+}
+
+# useful names
+names(runs_w) <- paste0("w_", inputw_cm_yr, "_cm_yr")
+# names(runs_w) <- gsub("\\.", "p", names(runs_w))
+
+# save all model runs
+saveRDS(runs_w, file = "FEMSDIA_w_sensitivity_runs.rds")
+
+runs_w <- readRDS("FEMSDIA_w_sensitivity_runs.rds")
+
+```
+
+### Output generation
+
+#### Plot DIC - Alkalinity - Organic C in depth for increasing w
+
+```{r, fig.height = 3, fig.width = 8}
+
+w_plotDAO <- plotDAO(unitplot = "(cm~yr^{-1})",
+                        breaks = c(0.01, 0.1, 1, 10),
+                        labels = as.character(c(0.01, 0.1, 1, 10)),
+                        runs = runs_w,
+                        varia = "w~")
+
+w_plotDAO[[2]]
+```
+
+#### Budgets
+
+##### C mineralization per mineralization process
+
+```{r}
+
+w_plotCbudg <- plotCbudg(runs = runs_w,
+                          unitplot = "(cm~yr^{-1})",
+                          varia = "w~")
+
+```
+
+##### DIC production / burial inorganic
+
+```{r}
+
+w_DICinorg <- plotDICinorg(runs = runs_w,
+                           unitplot = "(cm~yr^{-1})",
+                           varia = "w~")
+w_DICinorg[2]
+
+```
+
+##### Alkalinity production per mineralization process - Krumins
+
+```{r}
+
+w_plotAlkProd <- plotAlkProd(runs = runs_w,
+                             unitplot = "(cm~yr^{-1})",
+                             varia = "w~")
+w_plotAlkProd[2]
+
+
+```
+
+##### Alkalinity budget -Krumins analogue
+
+```{r}
+
+## Alkalinity budget - Krumins analogue
+
+w_plotAlkKrumins <- plot_AlkKrumins(runs = runs_w,
+                                    unitplot = "(cm~yr^{-1})",
+                                    varia = "w~")
+w_plotAlkKrumins[[2]]
+
+```
+
+## OM deposition flux - accumulation rate
+
+The endpoints of the range of organic matter deposition values, 0.41 - 51.2 +- 4.3
+mmol C m-2 d-1 are determined by Smith et al. (2015) on the low end and Walinsky 
+et al.(2009) on the high end.
+
+```{r label, options}
+
+# Vector of input Cflux
+
+# Vector of input w's - range from min to max reported by Bianchi et al. (2020).
+inputCmmol <- c(0.04, 0.1, 0.5, 1, 2, 5, 10, 15, 20, 25, 37.5, 50)
+
+# save each wrun
+runs_Cflux <- vector("list", length(inputCmmol))
+
+for (i in seq_along(inputCmmol)) {
+  
+  parms_i <- baseParms
+  parms_i$Cflux <- inputCmmol[i]
+  
+  message(
+    "Running Cflux = ", inputCmmol[i], " mmol m^-2 yr^-1",
+    " = ", signif(inputCmmol[i], 2), " mmol m^-2 yr^-1"
+  )
+  
+  out_i <- FEMSDIA_run_steady(parms = parms_i, dynamicpH = TRUE)
+  
+  runs_Cflux[[i]] <- list(
+    Cflux_m2day = inputCmmol[i],
+    parms   = parms_i,
+    output  = out_i
+  )
+}
+
+# useful names
+names(runs_Cflux) <- paste0("Cflux_", inputCmmol, "_mmol_/m2_/y")
+
+
+# save all model runs
+saveRDS(runs_Cflux, file = "FEMSDIA_Cflux_sensitivity_runs.rds")
+
+runs_Cflux <- readRDS("FEMSDIA_Cflux_sensitivity_runs.rds")
+
+```
+
+
+### Output generation
+
+#### Plot DIC - Alkalinity - Organic C in depth for increasing C flux
+
+```{r, fig.height = 3, fig.width = 8}
+
+C_plotDAO <- plotDAO(unitplot = expression("mmol m"^{-2}~"d"^{-1}),
+                        breaks = c(0.01, 0.1, 1, 10),
+                        labels = as.character(c(0.01, 0.1, 1, 10)),
+                        runs = runs_Cflux,
+                        varia = "Cflux~")
+
+C_plotDAO[[2]]
+
+```
+
+#### Budgets
+
+##### C mineralization per mineralization process
+
+```{r}
+
+C_plotCbudg <- plotCbudg(runs = runs_Cflux,
+                          unitplot = expression("mmol m"^{-2}~"d"^{-1}),
+                          varia = "Cflux~")
+
+C_plotCbudg[[2]]
+
+```
+
+##### DIC production / burial inorganic
+
+```{r}
+
+C_DICinorg <- plotDICinorg(runs = runs_Cflux,
+                            unitplot = expression("mmol m"^{-2}~"d"^{-1}),
+                            varia = "Cflux~")
+C_DICinorg[2]
+
+```
+
+##### Alkalinity production per mineralization process - Krumins
+
+```{r}
+
+C_plotAlkProd <- plotAlkProd(runs = runs_Cflux,
+                            unitplot = expression("mmol m"^{-2}~"d"^{-1}),
+                            varia = "Cflux~")
+C_plotAlkProd[2]
+
+```
+
+##### Alkalinity budget -Krumins analogue
+
+```{r}
+
+## Alkalinity budget - Krumins analogue
+C_plotAlkKrumins <- plot_AlkKrumins(runs = runs_Cflux,
+                            unitplot = expression("mmol m"^{-2}~"d"^{-1}),
+                            varia = "Cflux~")
+C_plotAlkKrumins[[2]]
+
+```
+
+## Iron deposition - accumulation rate
+
+Iron is deposited at different rates depending on the weathering intensity and the 
+geology of the fjord catchment. Wehrmann et al. (2014 - 10.1016/j.gca.2014.06.007)
+report fluxes that range from 0.44 to 29.44 mmol m-2 d-1. However, evidence shows 
+that 0.6 - 12 % of this inital flux is bioavailable-reactive (Laufer-Meiser et al., 
+2021 - 10.1038/s41467-021-21558-w). Over time, though, these non-reactive strongly
+crystalline forms may be broken down, and become biologically available and increase
+the proportion of bioavailable iron forms up to ninefold. This is not a direct depo-
+sition form though, but represents an interesting source of reactive iron generate 
+within the sediment itself.
+Below, we test a range of reactive iron deposition fluxes of 0.026 - 3.533 mmol m-2 d-1,
+corresponding to the 0.6 - 12 % range, as the our model does not include the initial
+transformation of a non-reactive deposited iron fraction into bioavailable forms.
+
+
+```{r label, options}
+
+# Vector of input Fe fluxes
+inputFemmol <- c(0.02, 0.05, 0.1, 0.2, 0.4, 0.6, 0.8, 1, 1.5, 2, 2.5, 3, 3.5, 4)
+
+# Removing 4 mmol m-2 d-1, non resolved alkalinity
+inputFemmol <- c(0.02, 0.05, 0.1, 0.2, 0.4, 0.6, 0.8, 1, 1.5, 2, 2.5, 3, 3.5)
+ 
+# save each wrun
+runs_Fe <- vector("list", length(inputFemmol))
+
+for (i in seq_along(inputFemmol)) {
+  
+  parms_i <- baseParms
+  parms_i$FeOH3flux <- inputFemmol[i]
+  
+  message(
+    "Running Fe = ", inputFemmol[i], "mmol m^-2 yr^-1"
+  )
+  
+  out_i <- FEMSDIA_run_steady(parms = parms_i, dynamicpH = TRUE)
+  
+  runs_Fe[[i]] <- list(
+    Feflux_m2day = inputFemmol[i],
+    parms   = parms_i,
+    output  = out_i
+  )
+}
+
+# useful names
+names(runs_Fe) <- paste0("Fe_", inputFemmol, "_mmolm2")
+# names(runs_Fe) <- gsub("\\.", "p", names(runs_Fe))
+
+# save all model runs
+saveRDS(runs_Fe, file = "FEMSDIA_Fe_sensitivity_runs.rds")
+
+runs_Fe <- readRDS("FEMSDIA_Fe_sensitivity_runs.rds")
+
+```
+
+### Output generation
+
+#### Plot DIC - Alkalinity - Organic C in depth for increasing reactive Fe flux
+
+```{r, fig.height = 3, fig.width = 8}
+
+Fe_plotDAO <- plotDAO(unitplot = expression("mmol m"^{-2}~"d"^{-1}),
+                        breaks = c(0.01, 0.1, 1, 3),
+                        labels = as.character(c(0.01, 0.1, 1, 3)),
+                        runs = runs_Fe,
+                        varia = "Feflux~")
+
+Fe_plotDAO[[2]]
+
+```
+
+#### Budgets
+
+##### C mineralization per mineralization process
+
+```{r}
+
+Fe_plotCbudg <- plotCbudg(runs = runs_Fe,
+                          unitplot = expression("mmol m"^{-2}~"d"^{-1}),
+                          varia = "Feflux~")
+
+Fe_plotCbudg[[2]]
+
+```
+
+##### DIC production / burial inorganic
+
+```{r}
+
+Fe_DICinorg <- plotDICinorg(runs = runs_Fe,
+                            unitplot = expression("mmol m"^{-2}~"d"^{-1}),
+                            varia = "Feflux~")
+Fe_DICinorg[2]
+
+```
+
+##### Alkalinity production per mineralization process - Krumins
+
+```{r}
+
+Fe_plotAlkProd <- plotAlkProd(runs = runs_Fe,
+                            unitplot = expression("mmol m"^{-2}~"d"^{-1}),
+                            varia = "Feflux~")
+Fe_plotAlkProd[2]
+
+```
+
+##### Alkalinity budget -Krumins analogue
+
+```{r}
+## Alkalinity budget - Krumins analogue
+Fe_plotAlkKrumins <- plot_AlkKrumins(runs = runs_Fe,
+                            unitplot = expression("mmol m"^{-2}~"d"^{-1}),
+                            varia = "Feflux~")
+Fe_plotAlkKrumins[[2]]
+
+```
+
+# the role of oxygenation
+
+Exploring the range from anoxic bottom water to fully oxygenated (default).
+
+- Not starting at 0 mmol m-3 because that does not solve within realistic timeframe.
+
+```{r label, options}
+
+
+# Vector of input Oxygen fluxes
+inputOxmmol <- c(0.1, 1, 2, 5, 10, 20, 50, 100, 150, 200, 250, 300)
+
+
+# save each wrun
+runs_Ox <- vector("list", length(inputOxmmol))
+
+for (i in seq_along(inputOxmmol)) {
+  
+  parms_i <- baseParms
+  parms_i$O2bw <- inputOxmmol[i]
+  
+  message(
+    "Running Ox = ", inputOxmmol[i], "mmol m^-3"
+  )
+  
+  out_i <- FEMSDIA_run_steady(parms = parms_i, dynamicpH = TRUE)
+  
+  runs_Ox[[i]] <- list(
+    Oxbw_m2 = inputOxmmol[i],
+    parms   = parms_i,
+    output  = out_i
+  )
+}
+
+# useful names
+names(runs_Ox) <- paste0("Ox_", inputOxmmol, "_mmolm3")
+# names(runs_Fe) <- gsub("\\.", "p", names(runs_Fe))
+
+# save all model run
+saveRDS(runs_Ox, file = "FEMSDIA_Ox_sensitivity_runs.rds")
+
+runs_Ox <- readRDS("FEMSDIA_Ox_sensitivity_runs.rds")
+
+```
+
+### Output generation
+
+#### Plot DIC - Alkalinity - Organic C in depth for increasing reactive Fe flux
+
+```{r, fig.height = 3, fig.width = 8}
+
+Ox_plotDAO <- plotDAO(unitplot = expression("mmol m"^{-3}),
+                        breaks = c(0.1, 1, 30, 100, 300),
+                        labels = as.character(c(0.1, 1, 30, 100, 300)),
+                        runs = runs_Ox,
+                        varia = "OxBW ~")
+
+Ox_plotDAO[[2]]
+
+```
+
+#### Budgets
+
+##### C mineralization per mineralization process
+
+```{r}
+
+Ox_plotCbudg <- plotCbudg(runs = runs_Ox,
+                          unitplot = expression("mmol m"^{-2}~"d"^{-1}),
+                          varia = "OxBW~")
+
+Ox_plotCbudg[[2]]
+
+```
+
+##### DIC production / burial inorganic
+
+```{r}
+
+Ox_DICinorg <- plotDICinorg(runs = runs_Ox,
+                            unitplot = expression("mmol m"^{-3}),
+                            varia = "OxBW~")
+Ox_DICinorg[2]
+
+```
+
+##### Alkalinity production per mineralization process - Krumins
+
+```{r}
+
+Ox_plotAlkProd <- plotAlkProd(runs = runs_Ox,
+                            unitplot = expression("mmol m"^{-3}),
+                            varia = "OxBW~")
+Ox_plotAlkProd[2]
+
+```
+
+##### Alkalinity budget -Krumins analogue
+
+```{r}
+## Alkalinity budget - Krumins analogue
+Ox_plotAlkKrumins <- plot_AlkKrumins(runs = runs_Ox,
+                            unitplot = expression("mmol m"^{-3}),
+                            varia = "OxBW~")
+Ox_plotAlkKrumins[[2]]
+
+```
+
+# The role of faunal activities
+
+## bioturbation
+
+## bioirrigation
+

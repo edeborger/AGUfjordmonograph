@@ -1,0 +1,8 @@
+"0","knitr::opts_chunk$set(echo = TRUE)"
+"0","library(FEMSDIA)"
+"0","library(ggplot2)"
+"0","library(tidyr)"
+"0","library(dplyr)"
+"0","library(purrr)"
+"0","library(ggh4x)"
+"0","source(""plotfuncs.R"")"

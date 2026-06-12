@@ -1,0 +1,42 @@
+---
+title: "Carbonate and alkalinity dynamics of fjord sediments - case studies"
+author: "Emil De Borger"
+output: html_document
+date: "2026-04-14"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(FEMSDIA)
+```
+
+# 1. Iceland
+
+High organic matter input
+
+```{r iceland}
+
+
+
+```
+
+# 2. Greenland
+
+High mineral input
+
+```{r greenland}
+
+
+
+```
+
+
+# 3. Patagonia
+
+Low oxygen conditions
+
+```{r patagonia}
+
+
+
+```
