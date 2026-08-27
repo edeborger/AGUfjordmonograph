@@ -1,9 +1,0 @@
-"0","w_DICinorg <- plotDICinorg(runs = runs_w,
-                           unitplot = ""(cm~yr^{-1})"",
-                           varia = ""w~"")
-w_DICinorg[2]
-"
-"1","[[1]]
-"
-"1","
-"

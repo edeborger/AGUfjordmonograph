@@ -1,0 +1,1391 @@
+---
+title: "Carbonate and alkalinity dynamics of fjord sediments"
+subtitle: "Case studies"
+author: "Emil De Borger, Sebastiaan van de Velde, Ulrike Braeckman, Karline Soetaert, Astrid Hylén"
+output: html_document
+date: "2026-04-14"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(FEMSDIA)
+library(ggplot2)
+library(patchwork)
+library(tidyr)
+library(dplyr)
+library(purrr)
+library(ReacTran)
+library(ggh4x)
+library(readxl)
+source("plotfuncs.R")
+
+deepGrid2 <- setup.grid.1D(x.up = 0, dx.1 = 0.0001, N = 100, L = 2)
+
+```
+
+# 1. Hvalfjordur, Iceland
+
+The carbonate-pathway, recycling-dominated case. Net benthic flux looks 
+carbonate-driven, but durable/new AT is modest because much is marine-carbonate 
+recycling. This is the case that teaches the two-nets distinction,  
+
+## 1.1. Input parameters
+
+```{r iceland}
+
+HVparms  <-  list(Cflux         = 18.1        ,  # Initial guess - global fjord average (https://doi.org/10.1007/s12237-025-01582-5)
+                  pFast         = 0.5         ,  # Berg et al. - split of 75slow/25 fast after 37 days.
+                  rFast         = 50/365.25   ,  # Soetaert et al., 1996 / was 75/365.25 in Berg but too high.
+                  rSlow         = 0.07/365.25 ,  # Soetaert et al., 1996 / Berg 2003
+                  NCrFdet       = 12/106      ,  # Slightly more degraded OM in mixture
+                  NCrSdet       = 12/106      ,  # Slightly more degraded OM in mixture
+                  NCrRdet       = 12/106      ,  # Slightly more degraded OM in mixture
+                  FeOH3flux     = 1.6         , 
+                  MnO2flux      = 14/365      ,  # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)
+                  O2bw          = 280         , # Reasonable estimate towards well oxygenated conditions (Watts et al., 2024 https://doi.org/10.1029/2023JG007978)
+                  w             = 0.005/365.25,  # Range: 0.1 - 12 cm/yr (Bianchi et al., 2020 table 3: https://doi.org/10.1016/j.earscirev.2020.103145)
+                  por0          = 0.75        ,  # Depositional environment
+                  NH3bw         = 10          ,  # Bottom water ammonium
+                  pordeep       = 0.7         ,  # Depositional environment
+                  rnitri1       = 0.01        ,  # Own / Luna's experience that 20 (Default) is way too much.
+                  rnitri2       = 0.01        ,  # Own / Luna's experience that 20 (Default) is way too much.
+                  Twater        = 8.2         ,
+                  biot          = 3e-8        , # based on Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)
+                  biotdepth     = 0.06        ,
+                  DBL           = 0.001       , 
+                  irr           = 0.2         , # based on Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)
+                  irrdepth      = 0.005       , # 0.003
+                  irratt        = 0.0282      , # 0.028
+                  ALKbw         = 2300        ,
+                  ksO2oxic      = 6           ,
+                  kinO2anox     = 2           ,
+                  ksFeOH3       = 4.e+04      , # mmolFeOH3/m3 half-sat FeOH3 conc in iron reduction
+                  kinFeOH3      = 1.e+04      , # mmolFeOH3/m3 half-sat FeOH3 inhibition S reduction\
+                  rH2SFeox      = 1.4*10^-9 * 86400, # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)                  
+                  ksSO4BSR      = 2e+03       , # mmolSO4/m3 half-sat SO4 conc in sulphate reduction
+                  kinSO4Met     = 2e+03       , # # mmolSO4/m3 half-sat SO4 inhibition methanogenesis      
+                  rH2Sox        = 4.38*10^-6  , #,# Wang and Van Capellen 1996. - > minor effect on cycles.
+                  rMnox         = 0.0137      , # Van Cappellen and Wang 1996; 1.1*10^-8 * 86400 in Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)
+                  rFeox         = 0.15        ,             # Van Cappellen and Wang 1996; 0.294
+                  rFeS2prod_S0  = 2.3*10^-10 * 86400 /50, # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905) # /50 otherwise way too much FeS2
+                  rFeS2prod_HS  = 8.9*10^-10 * 86400 /50, # Rickard, 1997a # /50 otherwise way too much FeS2
+                  rFeMnox       = 7.5*10^-9 * 86400     , # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905) orig: 7.5*10^-11
+                  rFeSprod      = 4.7*10^-8 * 86400     ,  #4.7*10^-8 * 86400     , # , # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)
+                  rH2SMnox      = 2*10^-9 * 86400       , # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)
+                  rFeSox        = 6.0*10^-7 * 86400     , # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)
+                  rFeS2ox       = 3.0*10^-11 * 86400   , # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)
+                  CALCflux     = 1.76,
+                  ARAGflux     = 0.93
+                  )
+
+HVsim <- FEMSDIA_run_steady(parms = HVparms, 
+                             dynamicpH = TRUE,
+                              # runsteady_times = c(0, 1e+4),
+                              Grid = deepGrid2)
+
+# saveRDS(HVsim, file = "HVsimulations.rds")
+
+HVsim <- readRDS("HVsimulations.rds")
+
+```
+
+
+## 1.2. Assess output
+
+### 1.2.1. Plot depth profiles with data overlay
+
+```{r}
+
+# plot(HVsim, ylim = c(0.2, 0),
+#           which = c("DIC", "ALK", "NH3", "Fe", "FeOH3",
+#                     "FeS2"))
+# 
+# plot(HVsim$OCpercent)
+
+HV_profiles <- prepare_profile_comparison(
+  model_output = HVsim,
+  measured_file = "casedata.xlsx",
+  sheet = "Profiles",
+  variables = c("ALK", "DIC", "NH3"),
+  measured_filters = list(
+    Fjord = "Hvalfjordur",
+    Station = 2
+  ),
+  measured_depth_col = "MidDepth",
+  error_columns = c(
+    ALK = "ALK_ERR",
+    DIC = "DIC_ERR",
+    NH3 = "NH3_ERR"
+  ),
+  max_depth_cm = 20
+)
+
+plot_profile_comparison(
+  profile_data = HV_profiles,
+  variable_labels = c(
+    NH3 = expression(NH[4]^"+"),
+    DIC = "DIC",
+    ALK = "Alkalinity"
+  ),
+  max_depth_cm = 20
+)
+
+```
+
+### 1.2.2. Plot of alkalinty generation in depth
+
+```{r}
+
+alk_components <- data.frame(
+  depth_cm = HVsim$depth * 100,
+
+  Ammonification =  HVsim$DINprodMin,
+  Phosphate       = -HVsim$DIPprodMin,
+  Denitrification =  0.8 * HVsim$Denitrific,
+  FeReduction     =  8   * HVsim$Feredmin,
+  MnReduction     =  4   * HVsim$MnredMin,
+  SulfateReduction =       HVsim$BSRmin,
+  Nitrification   = -2   * HVsim$Nitri1,
+  FeOxidation     = -2   * HVsim$Feoxid,
+  MnOxidation     = -2   * HVsim$Mnoxid,
+  H2SOxidation    = -2   * HVsim$H2Soxid
+) |>
+  tidyr::pivot_longer(
+    -depth_cm,
+    names_to = "Process",
+    values_to = "AlkRate"
+  ) |>
+  dplyr::filter(depth_cm <= 5)
+
+ggplot(alk_components,
+       aes(x = AlkRate, y = depth_cm, colour = Process)) +
+  geom_path() +
+labs(
+  x = expression(
+    "Alkalinity production rate" ~
+      "(mmol " * A[T] ~ m^{-3} ~ d^{-1} * ")"
+  ),
+  y = "Depth (cm)"
+) +
+  xlim(-1000, 2000) +
+  scale_y_reverse() +
+  theme_classic()
+
+```
+
+### 1.2.3. Get PIC budget
+
+```{r}
+
+get_PIC_budget <- function(out,
+                           CALCflux = NULL,
+                           ARAGflux = NULL) {
+
+  #------------------------------------------------------------
+  # Integrated fluxes
+  #------------------------------------------------------------
+
+  calcite_burial   <- out$CALCdeepflux
+  aragonite_burial <- out$ARAGdeepflux
+
+  calcite_diss   <- out$TotCALCdiss
+  aragonite_diss <- out$TotARAGdiss
+
+  calcite_prod <- out$TotCALCprod
+
+  aragonite_prod <- if ("TotARAGprod" %in% names(out))
+    out$TotARAGprod
+  else
+    0
+
+  #------------------------------------------------------------
+  # Budget table
+  #------------------------------------------------------------
+
+  tibble(
+    Mineral = c("Calcite", "Aragonite", "Total PIC"),
+
+    Input = c(
+      CALCflux,
+      ARAGflux,
+      CALCflux + ARAGflux
+    ),
+
+    Dissolution = c(
+      calcite_diss,
+      aragonite_diss,
+      calcite_diss + aragonite_diss
+    ),
+
+    Production = c(
+      calcite_prod,
+      aragonite_prod,
+      calcite_prod + aragonite_prod
+    ),
+
+    Burial = c(
+      calcite_burial,
+      aragonite_burial,
+      calcite_burial + aragonite_burial
+    )
+  ) %>%
+
+    mutate(
+
+      Net_reaction = Production - Dissolution,
+
+      Closure = Input +
+        Production -
+        Dissolution -
+        Burial,
+
+      Fraction_dissolved = Dissolution / Input,
+      Fraction_produced  = Production / Input,
+      Fraction_buried    = Burial / Input,
+
+      Percent_dissolved = 100 * Fraction_dissolved,
+      Percent_produced  = 100 * Fraction_produced,
+      Percent_buried    = 100 * Fraction_buried
+
+    )
+}
+
+PIC_budget_HV <- get_PIC_budget(HVsim,
+                                CALCflux     = HVparms$CALCflux,
+                                ARAGflux     = HVparms$ARAGflux)
+
+PIC_budget_HV
+
+```
+
+### 1.2.4. Plot carbonate dynamics profiles
+
+```{r}
+
+get_PIC_profiles <- function(out, max_depth_cm = 25) {
+
+  depth_cm <- out$depth * 100
+
+  df <- tibble(
+    depth_cm = depth_cm,
+
+    CALC_diss = out$CALCdiss,
+    ARAG_diss = out$ARAGdiss,
+    CALC_prod = out$CALCprod,
+
+    omegaCa = out$omegaCa,
+    omegaAr = out$omegaAr,
+    pH = out$pH,
+
+    TotalCALC = out$y[,"CALC"],
+    TotalARAG = out$y[,"ARAG"]
+  )
+
+  # Add aragonite production if present
+  if ("ARAGprod" %in% names(out)) {
+    df$ARAG_prod <- out$ARAGprod
+  } else {
+    df$ARAG_prod <- 0
+  }
+
+  df %>%
+    filter(depth_cm <= max_depth_cm)
+}
+
+PIC_profiles_HV <- get_PIC_profiles(
+  HVsim,
+  max_depth_cm = 25
+)
+
+PIC_process_long <- PIC_profiles_HV %>%
+  select(
+    depth_cm,
+    CALC_diss,
+    ARAG_diss,
+    CALC_prod,
+    ARAG_prod
+  ) %>%
+  pivot_longer(
+    -depth_cm,
+    names_to = "Process",
+    values_to = "Rate"
+  )
+
+ggplot(
+  PIC_process_long,
+  aes(
+    x = Rate,
+    y = depth_cm,
+    colour = Process
+  )
+) +
+  geom_path(linewidth = 0.9) +
+  scale_y_reverse() +
+  labs(
+    x = "Reaction rate",
+    y = "Depth (cm)",
+    colour = NULL
+  ) +
+  theme_classic(base_size = 13)
+
+PIC_profiles_HV %>%
+  select(
+    depth_cm,
+    omegaCa,
+    omegaAr
+  ) %>%
+  pivot_longer(
+    -depth_cm,
+    names_to = "Mineral",
+    values_to = "Omega"
+  ) %>%
+  ggplot(
+    aes(
+      x = Omega,
+      y = depth_cm,
+      colour = Mineral
+    )
+  ) +
+  geom_vline(
+    xintercept = 1,
+    linetype = "dashed",
+    colour = "grey50"
+  ) +
+  geom_path(linewidth = 0.9) +
+  scale_y_reverse() +
+  labs(
+    x = expression(Omega),
+    y = "Depth (cm)",
+    colour = NULL
+  ) +
+  theme_classic(base_size = 13)
+
+ggplot(
+  PIC_profiles_HV,
+  aes(
+    x = pH,
+    y = depth_cm
+  )
+) +
+  geom_path(linewidth = 0.9) +
+  scale_y_reverse() +
+  labs(
+    x = "pH",
+    y = "Depth (cm)"
+  ) +
+  theme_classic(base_size = 13)
+
+PIC_profiles_HV %>%
+  select(
+    depth_cm,
+    TotalCALC,
+    TotalARAG
+  ) %>%
+  pivot_longer(
+    -depth_cm,
+    names_to = "Mineral",
+    values_to = "Amount"
+  ) %>%
+  ggplot(
+    aes(
+      x = Amount,
+      y = depth_cm,
+      colour = Mineral
+    )
+  ) +
+  geom_path(linewidth = 0.9) +
+  scale_y_reverse() +
+  labs(
+    x = "Solid carbonate",
+    y = "Depth (cm)",
+    colour = NULL
+  ) +
+  theme_classic(base_size = 13)
+
+```
+
+# 2. Igaliku fjord, Greenland
+
+I changed this from Nuup Kangerlua to Igaliku fjord, because what we want to show
+is not really seen in Marius' data from Nuup. Igaliku 3 shows a relatively high
+MAR and intense FeS2 formation that is desired. 
+
+The pyrite-pathway, durable-AT case. High MAR buries FeS₂ below the bioturbated 
+zone and isolates CaCO₃. 
+
+## 2.1. Input parameters
+
+```{r greenland}
+
+IG3parms <- list(Cflux          = 5          , 
+                  pFast         = 0.3         , 
+                  rFast         = 50/365.25   , 
+                  rSlow         = 0.51/365.25  ,  
+                  NCrFdet       = 12/106      ,  # Slightly more degraded OM in mixture
+                  NCrSdet       = 12/106      ,  # Slightly more degraded OM in mixture
+                  NCrRdet       = 12/106      ,  # Slightly more degraded OM in mixture
+                  FeOH3flux     = 0.5         ,  # Lower spectrum reported in Wehrmann et al., 2014 (DOI: 10.1016/j.gca.2014.06.007)
+                  MnO2flux      = 14/365.25   ,  # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)
+                  O2bw          = 280         , 
+                  w             = 0.010/365.25,
+                  por0          = 0.82        ,
+                  pordeep       = 0.75        ,  
+                  rnitri1       = 0.03        ,  
+                  rnitri2       = 0.03        , 
+                  Twater        = 2           ,
+                  ALKbw         = 2190        ,
+                  NH3bw         = 50          ,
+                  biot          = 0.001/10000 , 
+                  biotdepth     = 0.01        ,
+                  biotatt       = 1.e-02      ,
+                  DBL           = 0.001       , 
+                  irr           = 0.16        ,  
+                  irrdepth      = 0.02        ,
+                  irratt        = 1.41/100    ,
+                  NH3Ads        = 0.22        ,
+                  ksO2oxic      = 5           ,
+                  kinO2anox     = 2           ,
+                  ksFeOH3       = 5e+04       , # mmolFeOH3/m3 half-sat FeOH3 conc in iron reduction
+                  kinFeOH3      = 1e+04       , # mmolFeOH3/m3 half-sat FeOH3 inhibition S reduction\
+                  rH2SFeox      = 1.4*10^-9 * 86400, # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)                  
+                  ksSO4BSR      = 2e+03       , # mmolSO4/m3 half-sat SO4 conc in sulphate reduction
+                  kinSO4Met     = 2e+03       , # # mmolSO4/m3 half-sat SO4 inhibition methanogenesis      
+                  rH2Sox        = 4.38*10^-6  , #,# Wang and Van Capellen 1996. - > minor effect on cycles.
+                  rMnox         = 0.0037      , # Van Cappellen and Wang 1996; 1.1*10^-8 * 86400 in Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)
+                  rFeox         = 0.1         , # Van Cappellen and Wang 1996; 1.1*10^-6 * 86400 in Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)
+                  rFeS2prod_S0  = 2.3*10^-10 * 86400 /50, # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905) # /50 otherwise way too much FeS2
+                  rFeS2prod_HS  = 8.9*10^-10 * 86400 /50, # Rickard, 1997a # /50 otherwise way too much FeS2
+                  rFeMnox       = 3.5*10^-9 * 86400     , # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905) orig: 7.5*10^-11
+                  rFeSprod      = 4.2*10^-8 * 86400     ,  #4.7*10^-8 * 86400     , # , # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)
+                  rH2SMnox      = 2.2*10^-9 * 86400     , # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)
+                  rFeSox        = 4.0*10^-7 * 86400     , # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)
+                  rFeS2ox       = 2.0*10^-11 * 86400 ,     # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)
+                  CALCflux     = 0.62,
+                  ARAGflux     = 0.34
+                  )
+
+IG3sim <- FEMSDIA_run_steady(parms = IG3parms, 
+                              dynamicpH = TRUE,
+                              # yini = IG3sim$y,
+                              runsteady_times = c(0, 1e+9),
+                              Grid = deepGrid2)
+
+
+# test <- FEMSDIA_run_dyna(parms     = IG3parms, 
+#                            times     = 0:365000,
+#                            dynamicpH = TRUE)
+
+saveRDS(IG3sim, file = "IG3simulations.rds")
+IG3sim <- readRDS("IG3simulations.rds")
+
+
+```
+
+## 2.2. Assess output
+
+### 2.2.1. Plot depth profiles with data overlay
+
+```{r}
+
+# plot(IG3sim, ylim = c(0.2, 0),
+#           which = c("DIC", "ALK", "NH3", "Fe", "FeOH3",
+#                     "FeS2"))
+# 
+# plot(IG3sim$OCpercent)
+
+IG3_profiles <- prepare_profile_comparison(
+  model_output = IG3sim,
+  measured_file = "casedata.xlsx",
+  sheet = "Profiles",
+  variables = c("ALK", "DIC", "NH3"),
+  measured_filters = list(
+    Fjord = "Igaliku",
+    Station = 3
+  ),
+  measured_depth_col = "MidDepth",
+  error_columns = c(
+    ALK = "ALK_ERR",
+    DIC = "DIC_ERR",
+    NH3 = "NH3_ERR"
+  ),
+  max_depth_cm = 20
+)
+
+plot_profile_comparison(
+  profile_data = IG3_profiles,
+  variable_labels = c(
+    NH3 = expression(NH[4]^"+"),
+    DIC = "DIC",
+    ALK = "Alkalinity"
+  ),
+  max_depth_cm = 20
+)
+
+```
+
+### 2.2.2. Plot of alkalinity generation in depth
+
+```{r}
+alk_components <- data.frame(
+  depth_cm = IG3sim$depth * 100,
+
+  Ammonification =  IG3sim$DINprodMin,
+  Phosphate       = -IG3sim$DIPprodMin,
+  Denitrification =  0.8 * IG3sim$Denitrific,
+  FeReduction     =  8   * IG3sim$Feredmin,
+  MnReduction     =  4   * IG3sim$MnredMin,
+  SulfateReduction =       IG3sim$BSRmin,
+  Nitrification   = -2   * IG3sim$Nitri1,
+  FeOxidation     = -2   * IG3sim$Feoxid,
+  MnOxidation     = -2   * IG3sim$Mnoxid,
+  H2SOxidation    = -2   * IG3sim$H2Soxid
+) |>
+  tidyr::pivot_longer(
+    -depth_cm,
+    names_to = "Process",
+    values_to = "AlkRate"
+  ) |>
+  dplyr::filter(depth_cm <= 20)
+
+ggplot(alk_components,
+       aes(x = AlkRate, y = depth_cm, colour = Process)) +
+  geom_path() +labs(
+  x = expression(
+    "Alkalinity production rate" ~
+      "(mmol " * A[T] ~ m^{-3} ~ d^{-1} * ")"
+  ),
+  y = "Depth (cm)"
+) +
+  scale_y_reverse() +
+  theme_classic()
+
+
+
+with(as.data.frame(IG3sim$y), {
+  c(
+    delta_DIC = DIC[which.max(IG3sim$depth)] - DIC[1],
+    delta_ALK = ALK[which.max(IG3sim$depth)] - ALK[1],
+    delta_NH3 = NH3[which.max(IG3sim$depth)] - NH3[1]
+  )
+})
+
+FEMSDIA_get_budgetC(IG3sim)
+
+
+```
+
+### 2.2.3. Get PIC budget
+
+```{r}
+
+PIC_budget_IG <- get_PIC_budget(IG3sim,
+                                CALCflux     = IG3parms$CALCflux,
+                                ARAGflux     = IG3parms$ARAGflux)
+
+PIC_budget_IG
+
+```
+
+### 2.2.4. Plot carbonate dynamics profiles
+
+```{r}
+
+PIC_profiles_IG <- get_PIC_profiles(
+  IG3sim,
+  max_depth_cm = 25
+)
+
+PIC_process_long <- PIC_profiles_IG %>%
+  select(
+    depth_cm,
+    CALC_diss,
+    ARAG_diss,
+    CALC_prod,
+    ARAG_prod
+  ) %>%
+  pivot_longer(
+    -depth_cm,
+    names_to = "Process",
+    values_to = "Rate"
+  )
+
+ggplot(
+  PIC_process_long,
+  aes(
+    x = Rate,
+    y = depth_cm,
+    colour = Process
+  )
+) +
+  geom_path(linewidth = 0.9) +
+  scale_y_reverse() +
+  labs(
+    x = "Reaction rate",
+    y = "Depth (cm)",
+    colour = NULL
+  ) +
+  theme_classic(base_size = 13)
+
+PIC_profiles_IG %>%
+  select(
+    depth_cm,
+    omegaCa,
+    omegaAr
+  ) %>%
+  pivot_longer(
+    -depth_cm,
+    names_to = "Mineral",
+    values_to = "Omega"
+  ) %>%
+  ggplot(
+    aes(
+      x = Omega,
+      y = depth_cm,
+      colour = Mineral
+    )
+  ) +
+  geom_vline(
+    xintercept = 1,
+    linetype = "dashed",
+    colour = "grey50"
+  ) +
+  geom_path(linewidth = 0.9) +
+  scale_y_reverse() +
+  labs(
+    x = expression(Omega),
+    y = "Depth (cm)",
+    colour = NULL
+  ) +
+  theme_classic(base_size = 13)
+
+ggplot(
+  PIC_profiles_IG,
+  aes(
+    x = pH,
+    y = depth_cm
+  )
+) +
+  geom_path(linewidth = 0.9) +
+  scale_y_reverse() +
+  labs(
+    x = "pH",
+    y = "Depth (cm)"
+  ) +
+  theme_classic(base_size = 13)
+
+PIC_profiles_IG %>%
+  select(
+    depth_cm,
+    TotalCALC,
+    TotalARAG
+  ) %>%
+  pivot_longer(
+    -depth_cm,
+    names_to = "Mineral",
+    values_to = "Amount"
+  ) %>%
+  ggplot(
+    aes(
+      x = Amount,
+      y = depth_cm,
+      colour = Mineral
+    )
+  ) +
+  geom_path(linewidth = 0.9) +
+  scale_y_reverse() +
+  labs(
+    x = "Solid carbonate",
+    y = "Depth (cm)",
+    colour = NULL
+  ) +
+  theme_classic(base_size = 13)
+
+```
+
+
+# 3. Byfjorden, Sweden
+
+Constructed parameters based on Watts et al., 2024 and Wittig et al., in prep.
+
+the end-member that stress-tests the definition. No oxic zone, no fauna, FeS armouring
+suppressing pyrite formation, H₂S escaping to the water column and reoxidising — 
+so a naive "anoxia maximises net AT" expectation fails, and the SWI-flux-vs-durable-input
+gap is at its widest. This is pedagogically the most valuable third case precisely 
+because it closes the loop on 3.2 and on the non-monotonic oxygen story in 3.4.1. 
+
+## 3.1. Input parameters
+
+```{r sweden}
+
+SWEparms  <- list(Cflux         = 5         ,
+                  pFast         = 0.1         ,
+                  rFast         = 25/365.25   ,
+                  rSlow         = 0.008/365.25  ,
+                  NCrFdet       = 12/106      ,  # Slightly more degraded OM in mixture
+                  NCrSdet       = 12/106      ,  # Slightly more degraded OM in mixture
+                  NCrRdet       = 12/106      ,  # Slightly more degraded OM in mixture
+                  FeOH3flux     = 0.3         ,  # Lower spectrum reported in Wehrmann et al., 2014 (DOI: 10.1016/j.gca.2014.06.007) (0.5 in Berg et al., 2003)
+                  MnO2flux      = 14/365.25   ,  # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)
+                  O2bw          = 0.01        , # 
+                  NO3bw         = 0.001       , # 0.001
+                  NO2bw         = 0.001,
+                  w             = 0.00076/365.25,
+                  por0          = 0.86        ,
+                  pordeep       = 0.78        ,
+                  rnitri1       = 0.1         ,
+                  rnitri2       = 0.1         ,
+                  Twater        = 8.5         ,
+                  biot          = 0.1e-09     , #-09
+                  biotdepth     = 0.02        ,
+                  biotatt       = 1.e-02      ,
+                  DBL           = 0.0005      ,
+                  irr           = 0.0         ,
+                  irrdepth      = 0.000       ,
+                  irratt        = 1/100       ,
+                  ALKbw         = 4000        ,
+                  DICbw         = 3950        ,
+                  NH3Ads        = 0.01       ,
+                  ksO2oxic      = 3           ,
+                  kinO2anox     = 1           ,
+                  ksFeOH3       = 1.e+04      , # mmolFeOH3/m3 half-sat FeOH3 conc in iron reduction
+                  kinFeOH3      = 1.e+04      , # mmolFeOH3/m3 half-sat FeOH3 inhibition S reduction\
+                  rH2SFeox      = 1.4*10^-9 * 86400, # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)
+                  ksSO4BSR      = 2e+03       , # mmolSO4/m3 half-sat SO4 conc in sulphate reduction
+                  kinSO4Met     = 2e+03       , # # mmolSO4/m3 half-sat SO4 inhibition methanogenesis
+                  rH2Sox        = 4.38*10^-6  , #,# Wang and Van Capellen 1996. - > minor effect on cycles.
+                  rMnox         = 0.0137      , #
+                  rFeox         = 0.15        , #
+                  rFeS2prod_S0  = 2.3*10^-10 * 86400 /50, # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905) # /50 otherwise way too much FeS2
+                  rFeS2prod_HS  = 8.9*10^-10 * 86400 /50, # Rickard, 1997a # /50 otherwise way too much FeS2
+                  rFeMnox       = 7.5*10^-9 * 86400     , # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905) orig: 7.5*10^-11
+                  rFeSprod      = 4.7*10^-8 * 86400     ,  #4.7*10^-8 * 86400     , # , # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)
+                  rH2SMnox      = 2*10^-9 * 86400       , # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)
+                  rFeSox        = 6.0*10^-7 * 86400     , # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)
+                  rFeS2ox       = 3.0*10^-11 * 86400    , # Berg et al., 2003 (DOI: 10.2475/ajs.303.10.905)
+                  CALCflux     = 0.2,
+                  ARAGflux     = 0.1
+                  )
+
+
+SWEsim <- FEMSDIA_run_steady(parms = SWEparms, 
+                              dynamicpH = TRUE,
+                              Grid = deepGrid2)
+
+
+saveRDS(SWEsim, file = "SWEsimulations.rds")
+SWEsim <- readRDS("SWEsimulations.rds")
+
+```
+
+## 3.2. Assess output
+
+### 3.2.1. Plot depth profiles with data overlay
+
+```{r}
+
+SWE_profiles <- prepare_profile_comparison(
+  model_output = SWEsim,
+  measured_file = "casedata.xlsx",
+  sheet = "Profiles",
+  variables = c("ALK", "DIC", "NH3"),
+  measured_filters = list(
+    Fjord = "Byfjord",
+    Station = 1
+  ),
+  measured_depth_col = "MidDepth",
+  error_columns = c(
+    ALK = "ALK_ERR",
+    DIC = "DIC_ERR",
+    NH3 = "NH3_ERR"
+  ),
+  max_depth_cm = 50
+)
+
+plot_profile_comparison(
+  profile_data = SWE_profiles,
+  variable_labels = c(
+    NH3 = expression(NH[4]^"+"),
+    DIC = "DIC",
+    ALK = "Alkalinity"
+  ),
+  max_depth_cm = 50
+)
+
+```
+
+### 3.2.2. Plot alkalinity generation in depth
+
+```{r}
+
+alk_components <- data.frame(
+  depth_cm = SWEsim$depth * 100,
+
+  Ammonification =  SWEsim$DINprodMin,
+  Phosphate       = -SWEsim$DIPprodMin,
+  Denitrification =  0.8 * SWEsim$Denitrific,
+  FeReduction     =  8   * SWEsim$Feredmin,
+  MnReduction     =  4   * SWEsim$MnredMin,
+  SulfateReduction =       SWEsim$BSRmin,
+  Nitrification   = -2   * SWEsim$Nitri1,
+  FeOxidation     = -2   * SWEsim$Feoxid,
+  MnOxidation     = -2   * SWEsim$Mnoxid,
+  H2SOxidation    = -2   * SWEsim$H2Soxid
+) |>
+  tidyr::pivot_longer(
+    -depth_cm,
+    names_to = "Process",
+    values_to = "AlkRate"
+  ) |>
+  dplyr::filter(depth_cm <= 2)
+
+ggplot(alk_components,
+       aes(x = AlkRate, y = depth_cm, colour = Process)) +
+  
+  geom_path()+labs(
+  x = expression(
+    "Alkalinity production rate" ~
+      "(mmol " * A[T] ~ m^{-3} ~ d^{-1} * ")"
+  ),
+  y = "Depth (cm)"
+) +
+  scale_y_reverse() +
+  theme_classic()
+
+
+FEMSDIA_get_budgetC(SWEsim)
+
+
+```
+
+### 3.2.3. Get PIC budget
+
+```{r}
+
+PIC_budget_SWE <- get_PIC_budget(SWEsim,
+                                CALCflux     = SWEparms$CALCflux,
+                                ARAGflux     = SWEparms$ARAGflux)
+
+PIC_budget_SWE
+
+```
+
+### 3.2.4. Plot carbonate dynamics profiles
+
+```{r}
+
+PIC_profiles_SWE <- get_PIC_profiles(
+  SWEsim,
+  max_depth_cm = 25
+)
+
+PIC_process_long <- PIC_profiles_SWE %>%
+  select(
+    depth_cm,
+    CALC_diss,
+    ARAG_diss,
+    CALC_prod,
+    ARAG_prod
+  ) %>%
+  pivot_longer(
+    -depth_cm,
+    names_to = "Process",
+    values_to = "Rate"
+  )
+
+ggplot(
+  PIC_process_long,
+  aes(
+    x = Rate,
+    y = depth_cm,
+    colour = Process
+  )
+) +
+  geom_path(linewidth = 0.9) +
+  scale_y_reverse() +
+  labs(
+    x = "Reaction rate",
+    y = "Depth (cm)",
+    colour = NULL
+  ) +
+  theme_classic(base_size = 13)
+
+PIC_profiles_SWE %>%
+  select(
+    depth_cm,
+    omegaCa,
+    omegaAr
+  ) %>%
+  pivot_longer(
+    -depth_cm,
+    names_to = "Mineral",
+    values_to = "Omega"
+  ) %>%
+  ggplot(
+    aes(
+      x = Omega,
+      y = depth_cm,
+      colour = Mineral
+    )
+  ) +
+  geom_vline(
+    xintercept = 1,
+    linetype = "dashed",
+    colour = "grey50"
+  ) +
+  geom_path(linewidth = 0.9) +
+  scale_y_reverse() +
+  labs(
+    x = expression(Omega),
+    y = "Depth (cm)",
+    colour = NULL
+  ) +
+  theme_classic(base_size = 13)
+
+ggplot(
+  PIC_profiles_SWE,
+  aes(
+    x = pH,
+    y = depth_cm
+  )
+) +
+  geom_path(linewidth = 0.9) +
+  scale_y_reverse() +
+  labs(
+    x = "pH",
+    y = "Depth (cm)"
+  ) +
+  theme_classic(base_size = 13)
+
+PIC_profiles_SWE %>%
+  select(
+    depth_cm,
+    TotalCALC,
+    TotalARAG
+  ) %>%
+  pivot_longer(
+    -depth_cm,
+    names_to = "Mineral",
+    values_to = "Amount"
+  ) %>%
+  ggplot(
+    aes(
+      x = Amount,
+      y = depth_cm,
+      colour = Mineral
+    )
+  ) +
+  geom_path(linewidth = 0.9) +
+  scale_y_reverse() +
+  labs(
+    x = "Solid carbonate",
+    y = "Depth (cm)",
+    colour = NULL
+  ) +
+  theme_classic(base_size = 13)
+
+```
+
+# 4. Synthesis figure
+
+## 4.1. Extract metrics needed for plot
+
+```{r synthesis}
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(viridis)
+
+get_synthesis_metrics <- function(out) {
+
+  # mmol CaCO3 m-2 d-1:
+  # positive = net carbonate dissolution
+  carbonate_balance <-
+    out$TotCALCdiss +
+    out$TotARAGdiss -
+    out$TotCALCprod
+
+  # mmol FeS2 m-2 d-1
+  pyrite_burial <- out$FeS2deepflux
+
+  # Combined durable alkalinity effect
+  durable_AT <-
+    2 * carbonate_balance +
+    4 * pyrite_burial
+  
+  # At flux from model
+  ATflux <- out$ALKflux
+
+  tibble(
+    Carbonate_balance = as.numeric(carbonate_balance),
+    Pyrite_burial = as.numeric(pyrite_burial),
+    Durable_AT = as.numeric(durable_AT),
+    Model_AT = -as.numeric(ATflux)
+  )
+}
+
+fjord_points <- bind_rows(
+
+
+  get_synthesis_metrics(HVsim) |>
+    mutate(Fjord = "Hvalfjörður"),
+
+  get_synthesis_metrics(IG3sim) |>
+    mutate(Fjord = "Igaliku Fjord"),
+  
+  get_synthesis_metrics(SWEsim) |>
+    mutate(Fjord = "Byfjord")
+)
+
+fjord_points
+fjord_points$Fjord <- factor(fjord_points$Fjord, levels = c("Hvalfjörður", "Igaliku Fjord", "Byfjord"))
+```
+
+## 4.2. A panel - plot with filled background
+
+```{r label, options}
+
+x_range <- range(
+  fjord_points$Carbonate_balance,
+  na.rm = TRUE
+)
+
+y_range <- range(
+  fjord_points$Pyrite_burial,
+  na.rm = TRUE
+)
+
+x_buffer <- max(diff(x_range) * 0.25, 0.05)
+y_buffer <- max(diff(y_range) * 0.25, 0.01)
+
+carbonate_vector <- seq(
+  from = -1,
+  to = 3.3,
+  length.out = 200
+)
+
+pyrite_vector <- seq(
+  from = 0,
+  to = 1,
+  length.out = 200
+)
+
+background_df <- tidyr::expand_grid(
+  Carbonate_balance = carbonate_vector,
+  Pyrite_burial = pyrite_vector
+) %>%
+  dplyr::mutate(
+    Durable_AT =
+      2 * Carbonate_balance +
+      4 * Pyrite_burial
+  )
+
+```
+
+```{r, fig.height=5, fig.width=10}
+
+
+synthesis_plot <- ggplot() +
+
+  geom_raster(
+    data = background_df,
+    aes(
+      x = Carbonate_balance,
+      y = Pyrite_burial,
+      fill = Durable_AT
+    ),
+    interpolate = TRUE
+  ) +
+
+  geom_contour(
+    data = background_df,
+    aes(
+      x = Carbonate_balance,
+      y = Pyrite_burial,
+      z = Durable_AT
+    ),
+    colour = "black",
+    linewidth = 0.45,
+    alpha = 0.3
+  ) +
+
+geom_point(
+  data = fjord_points,
+  aes(
+    x = Carbonate_balance,
+    y = Pyrite_burial,
+    shape = Fjord
+  ),
+  size = 4.8,
+  fill = "lightgrey",
+  colour = "black",
+  stroke = 1.5
+) +
+scale_shape_manual(
+  values = c(
+    "Hvalfjörður" = 24,
+    "Igaliku Fjord" = 22,
+    "Byfjord" = 21
+  )
+) +
+
+  geom_text(
+    data = fjord_points,
+    aes(
+      x = Carbonate_balance,
+      y = Pyrite_burial,
+      label = Fjord
+    ),
+    nudge_x = 0.03 * diff(range(carbonate_vector)),
+    nudge_y = 0.03 * diff(range(pyrite_vector)),
+    hjust = 0,
+    size = 4
+  ) +
+  scale_x_continuous(
+  limits = c(-1, 3.3),
+  breaks = c(-1, 0, 1, 2, 3)
+) +
+
+  scale_fill_viridis_c(
+  option = "D",
+  limits = range(background_df$Durable_AT),
+  breaks = c(-2, 0, 2, 4, 6, 8, 10),
+  name = expression("Net benthic " * A[T] ~ "flux"~~~"(mmol m"^{-2}~d^{-1}*")")
+) +
+
+  labs(
+  x = expression(
+    "Net CaCO"[3]~"dissolution - precipitation"~
+      "(mmol CaCO"[3]~"m"^{-2}~d^{-1}*")"
+  ),
+
+    y = expression(
+      "FeS"[2]~" burial (mmol m"^{-2}~d^{-1}*")"
+    )
+  ) +
+
+  coord_cartesian(
+    expand = FALSE,
+    clip = "off"
+  ) +
+
+  theme_classic(base_size = 13) +
+
+  theme(
+    axis.text = element_text(colour = "black"),
+    legend.position = "right",
+    plot.margin = margin(10, 50, 10, 10)
+  )
+
+synthesis_plot
+
+```
+
+## 4.3. B panel - plot of comparison net and true AT flux
+
+```{r label, options}
+
+
+ggplot(fjord_points,
+       aes(x = Durable_AT,
+           y = Model_AT,
+           shape = Fjord)) +
+  geom_abline(slope = 1, intercept = 0,
+              linetype = "dashed", colour = "grey50") +
+  geom_point(size = 4.5, fill = "white", colour = "black", stroke = 1.3) +
+  geom_text(aes(label = Fjord),
+            nudge_x = 0.15,
+            show.legend = FALSE) +
+  coord_equal() +
+  labs(
+    x = expression("Net benthic " * A[T] ~ "flux"~~~"(mmol m"^{-2}~d^{-1}*")"),
+    y = expression("Full benthic " * A[T] ~ "flux"~~~"(mmol m"^{-2}~d^{-1}*")")
+  ) +
+  theme_bw(base_size = 14)
+
+```
+
+## 4.4. Combining both plots
+
+```{r , fig.height= 6, fig.width=10}
+
+library(ggplot2)
+library(patchwork)
+
+# ------------------------------------------------------------
+# Panel A
+# ------------------------------------------------------------
+
+synthesis_plot <- synthesis_plot +
+
+  guides(
+    shape = guide_legend(
+      title.position = "top",
+      title.hjust = 0.5,
+      nrow = 1,
+      order = 1,
+      override.aes = list(
+        size = 4,
+        fill = "lightgrey"
+      )
+    ),
+    fill = guide_colourbar(
+      title.position = "top",
+      title.hjust = 0.5,
+      barwidth = grid::unit(8, "cm"),
+      barheight = grid::unit(0.45, "cm"),
+      direction = "horizontal",
+      order = 2
+    )
+  ) +
+
+  theme(
+    legend.position = "bottom",
+    legend.box = "vertical",
+    legend.box.just = "center",
+    plot.margin = margin(10, 10, 5, 10)
+  )
+
+
+# ------------------------------------------------------------
+# Panel B
+# ------------------------------------------------------------
+
+comparison_plot <- ggplot(
+  fjord_points,
+  aes(
+    x = Durable_AT,
+    y = Model_AT,
+    shape = Fjord
+  )
+) +
+
+  geom_abline(
+    slope = 1,
+    intercept = 0,
+    linetype = "dashed",
+    colour = "grey55",
+    linewidth = 0.5
+  ) +
+
+  geom_point(
+    size = 4.3,
+    fill = "lightgrey",
+    colour = "black",
+    stroke = 1.3
+  ) +
+
+  scale_shape_manual(
+    values = c(
+      "Byfjord" = 21,
+      "Hvalfjörður" = 24,
+      "Igaliku Fjord" = 22
+    )
+  ) +
+
+  coord_equal(
+    xlim = c(-0.2, 11),
+    ylim = c(0, 11),
+    expand = FALSE
+  ) +
+
+  scale_x_continuous(
+    breaks = c(0, 2.5, 5, 7.5, 10)
+  ) +
+
+  scale_y_continuous(
+    breaks = c(0, 2.5, 5, 7.5, 10)
+  ) +
+
+  labs(
+    y = expression(
+      "Net benthic " * A[T] ~ "flux" ~
+        "(mmol m"^{-2} ~ d^{-1} * ")"
+    ),
+    x = expression(
+      "Net " * A[T] ~ "input to the ocean" ~
+        "(mmol m"^{-2} ~ d^{-1} * ")"
+    )
+  ) +
+
+  theme_classic(base_size = 12) +
+
+  theme(
+    legend.position = "none",
+    axis.text = element_text(colour = "black"),
+    plot.margin = margin(10, 10, 5, 10)
+  )
+
+comparison_plot
+
+
+library(patchwork)
+library(grid)
+
+# Remove the duplicate legend from panel B
+comparison_plot <- comparison_plot +
+  guides(shape = "none") +
+  theme(
+    legend.position = "none"
+  )
+
+# Format the two legends from panel A
+synthesis_plot <- synthesis_plot +
+  guides(shape = guide_legend(
+      title.position = "top",
+      title.hjust = 0.5,
+      nrow = 1,
+      byrow = TRUE,
+      order = 1,
+      override.aes = list(
+        size = 4,
+        fill = "lightgrey"
+      )
+    ),
+    fill = guide_colourbar(
+      title.position = "top",
+      title.hjust = 0.5,
+      direction = "horizontal",
+      barwidth = unit(7, "cm"),
+      barheight = unit(0.4, "cm"),
+      order = 2
+    )
+  ) +
+  theme(
+    legend.position = "bottom",
+    legend.box = "vertical",
+    legend.box.just = "center",
+    legend.justification = "center"
+  )
+
+# Combine
+combined_plot_horizontallegend <- (
+    synthesis_plot +
+    comparison_plot +        
+    plot_layout(
+      widths = c(1.65, 1),
+      guides = "collect"
+    )
+) +
+  plot_annotation(
+    tag_levels = "a"
+  ) &
+  theme(
+    legend.position = "bottom",
+    legend.box = "horizontal",
+    legend.box.just = "center",
+    legend.justification = "center",
+    plot.tag = element_text(
+      face = "bold",
+      size = 14
+    )
+  )
+
+combined_plot_horizontallegend
+
+ggsave("./outputfigures/combined_plot_horizontallegend.png",
+       height = 6, width = 10, units = "in",
+       dpi = 330)
+
+
+```
